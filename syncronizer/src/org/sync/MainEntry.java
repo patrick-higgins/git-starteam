@@ -26,6 +26,7 @@ import com.starteam.Server;
 import com.starteam.User;
 import com.starteam.View;
 import com.starteam.NetMonitor;
+import com.starteam.exceptions.LogonException;
 import jargs.gnu.CmdLineParser;
 import jargs.gnu.CmdLineParser.IllegalOptionValueException;
 import jargs.gnu.CmdLineParser.UnknownOptionException;
@@ -143,63 +144,57 @@ public class MainEntry {
 		if(null == password) {
 			password = new String(con.readPassword("Password:"));
 		}
-		User userid = starteam.logOn(user, password);
-		if(null != userid) {
-			boolean projectFound = false;
-			for(Project p : starteam.getProjects()) {
-				if(p.getName().equalsIgnoreCase(project)) {
-					projectFound = true;
-					if(null == keyword) {
-						p.setExpandKeywords(false);
-					} else {
-						p.setExpandKeywords(true);
-					}
-					GitImporter importer = new GitImporter(starteam, p);
-					try {
-						if(null != head) {
-							importer.setHeadName(head);
-						}
-						if(null != resume) {
-							importer.setResume(resume);
-						}
-						if(null != dumpTo) {
-							importer.setDumpFile(new File(dumpTo));
-						}
-						importer.setVerbose(verbose);
-						importer.setCreateCheckpoints(createCheckpoints);
-						boolean viewFound = false;
-						for(View v : p.getViews()) {
-							if(v.getName().equalsIgnoreCase(view)) {
-								viewFound = true;
-								NetMonitor.onFile(new java.io.File("netmon.out"));
-								if(null != timeBased && timeBased) {
-									importer.generateDayByDayImport(v, date, folder, domain);
-								} else if (null != labelBased && labelBased) {
-									importer.generateByLabelImport(v, date, folder, domain);
-								} else {
-									importer.generateFastImportStream(v, folder, domain);
-								}
-								break;
-							} else if(verbose) {
-								System.err.println("Not view: " + v.getName());
-							}
-						}
-						if (!viewFound) {
-							System.err.println("View not found: " + view);
-						}
-					} finally {
-						importer.dispose();
-					}
-					break;
-				} else if(verbose) {
-					System.err.println("Not project: " + p.getName());
-				}
-			}
-			if (!projectFound) {
-				System.err.println("Project not found: " + project);
-			}
+
+		try {
+			starteam.logOn(user, password);
+		} catch (LogonException e) {
+			System.err.println("Could not log on: " + e.getErrorMessage());
+			System.exit(3);
+		}
+
+		Project p = starteam.findProject(project);
+		if(null == p) {
+			System.err.println("Project not found: " + project);
+			System.exit(3);
+		}
+
+		View v = p.findView(view);
+		if(null == v) {
+			System.err.println("View not found: " + view);
+			System.exit(3);
+		}
+
+		if(null == keyword) {
+			p.setExpandKeywords(false);
 		} else {
-			System.err.println("Could not log in user: " + user);
+			p.setExpandKeywords(true);
+		}
+
+		GitImporter importer = new GitImporter(starteam, p);
+		try {
+			if(null != head) {
+				importer.setHeadName(head);
+			}
+			if(null != resume) {
+				importer.setResume(resume);
+			}
+			if(null != dumpTo) {
+				importer.setDumpFile(new File(dumpTo));
+			}
+			importer.setVerbose(verbose);
+			importer.setCreateCheckpoints(createCheckpoints);
+
+			NetMonitor.onFile(new java.io.File("netmon.out"));
+
+			if(null != timeBased && timeBased) {
+				importer.generateDayByDayImport(v, date, folder, domain);
+			} else if (null != labelBased && labelBased) {
+				importer.generateByLabelImport(v, date, folder, domain);
+			} else {
+				importer.generateFastImportStream(v, folder, domain);
+			}
+		} finally {
+			importer.dispose();
 		}
 	}
 
