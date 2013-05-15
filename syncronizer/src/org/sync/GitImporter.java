@@ -40,22 +40,24 @@ import org.sync.util.CommitInformation;
 import org.sync.util.LabelDateComparator;
 import org.sync.util.TempFileManager;
 
-import com.starbase.starteam.Folder;
-import com.starbase.starteam.Item;
-import com.starbase.starteam.ItemList;
-import com.starbase.starteam.Label;
-import com.starbase.starteam.Project;
-import com.starbase.starteam.PropertyNames;
-import com.starbase.starteam.RecycleBin;
-import com.starbase.starteam.Server;
-import com.starbase.starteam.StarTeamFinder;
-import com.starbase.starteam.Status;
-import com.starbase.starteam.Type;
-import com.starbase.starteam.View;
-import com.starbase.starteam.File;
-import com.starbase.starteam.CheckoutManager;
-import com.starbase.starteam.ViewConfiguration;
-import com.starbase.util.OLEDate;
+import com.starteam.Folder;
+import com.starteam.Item;
+import com.starteam.Label;
+import com.starteam.LiveObject;
+import com.starteam.Project;
+import com.starteam.Property;
+import com.starteam.PropertyCollection;
+import com.starteam.RecycleBin;
+import com.starteam.Server;
+import com.starteam.Type;
+import com.starteam.View;
+import com.starteam.File;
+import com.starteam.CheckoutManager;
+import com.starteam.ViewConfiguration;
+import com.starteam.ViewMember;
+import com.starteam.ViewMemberCollection;
+import com.starteam.util.DateTime;
+import com.starteam.util.FileUtils;
 
 public class GitImporter {
 	private Server server;
@@ -110,9 +112,10 @@ public class GitImporter {
 	}
 
 	public void recursiveLastModifiedTime(Folder f) {
-		for(Item i : f.getItems(f.getTypeNames().FILE)) {
+		for(Object i : f.getItems(f.getView().getServer().getTypes().FILE)) {
 			if(i instanceof File) {
-				long modifiedTime = i.getModifiedTime().getLongValue();
+				File file = (File) i;
+				long modifiedTime = file.getModifiedTime().toJavaMsec();
 				if(modifiedTime > lastModifiedTime) {
 					lastModifiedTime = modifiedTime;
 				}
@@ -134,7 +137,7 @@ public class GitImporter {
 		deletedFiles.clear();
 		deletedFiles.addAll(lastFiles);
 		sortedFileList.clear();
-		folder.populateNow(server.getTypeNames().FILE, null, -1);
+		folder.populate(server.getTypes().FILE, -1);
 		recursiveFilePopulation(head, folder);
 		lastFiles.clear();
 		lastFiles.addAll(files);
@@ -145,12 +148,11 @@ public class GitImporter {
 	}
 
 	public void generateFastImportStream(View view, String folderPath, String domain) {
-		// http://techpubs.borland.com/starteam/2009/en/sdk_documentation/api/com/starbase/starteam/CheckoutManager.html
-		// said old version (passed in /opt/StarTeamCP_2005r2/lib/starteam80.jar) "Deprecated. Use View.createCheckoutManager() instead."
-		CheckoutManager cm = new CheckoutManager(view);
-		cm.getOptions().setEOLConversionEnabled(false);
+		CheckoutManager cm = view.createCheckoutManager();
+		cm.getOptions().setEOLFormat(File.EOLFormat.PLATFORM);
 		// Disabling status update leads to a large performance increase.
 		cm.getOptions().setUpdateStatus(false);
+
 		lastInformation = new CommitInformation(Long.MIN_VALUE, Integer.MIN_VALUE, "", "");
 
 		folder = null;
@@ -174,21 +176,20 @@ public class GitImporter {
 		deletedFiles.clear();
 		deletedFiles.addAll(lastFiles);
 		sortedFileList.clear();
-		PropertyNames propNames = folder.getPropertyNames();
 		// is this really worth all the trouble? null is pretty fast...
-		String[] populateProps = new String[] {
-			propNames.FILE_NAME,
-			propNames.COMMENT,
-			propNames.FILE_CONTENT_REVISION,
-			propNames.FILE_DESCRIPTION,
-			propNames.MODIFIED_TIME,
-			propNames.MODIFIED_USER_ID,
-			propNames.EXCLUSIVE_LOCKER,
-			propNames.FILE_ENCODING,
-			propNames.FILE_EOL_CHARACTER,
-			propNames.FILE_EXECUTABLE,
-		};
-		folder.populateNow(server.getTypeNames().FILE, populateProps, -1);
+		File.Type.PropertyCollection fileProps = (com.starteam.File.Type.PropertyCollection) server.getTypes().FILE.getProperties();
+		PropertyCollection populateProps = Property.resolveAllDependencies(new PropertyCollection(new Property[] {
+					fileProps.NAME,
+					fileProps.COMMENT,
+					fileProps.CONTENT_VERSION,
+					fileProps.DESCRIPTION,
+					fileProps.MODIFIED_BY,
+					fileProps.MODIFIED_TIME,
+					//ViewMember.Type.ExclusiveLockerProperty,
+					fileProps.EOL_FORMAT,
+					fileProps.IS_EXECUTABLE,
+				}));
+		folder.populate(server.getTypes().FILE, populateProps, -1);
 		recursiveFilePopulation(head, folder);
 		lastFiles.clear();
 		lastFiles.addAll(files);
@@ -206,11 +207,12 @@ public class GitImporter {
 				System.err.println("Latest file: " + latest.getPath() + " @ " + new java.util.Date(latest.getTime()));
 			}
 		}
+
 		exportStream = helper.getFastImportStream();
 		for(Map.Entry<CommitInformation, File> e : AddedSortedFileList.entrySet()) {
 			File f = e.getValue();
 			CommitInformation current = e.getKey();
-			String userName = server.getUser(current.getUid()).getName();
+			String userName = server.findUser(current.getUid()).getName();
 			String userEmail = userName.replaceAll(" ", ".") + "@" + domain;
 			String path = pathname(f);
 
@@ -281,6 +283,7 @@ public class GitImporter {
 				e1.printStackTrace();
 			}
 		}
+
 		// TODO: Simple hack to make deletion of diapered files. Since starteam does not carry some kind of
 		// TODO: delete event. (as known from now)
 		if(deletedFiles.size() > 0) {
@@ -288,19 +291,19 @@ public class GitImporter {
 				System.err.println("Janitor was needed for cleanup");
 				java.util.Date janitorTime;
 				if(view.getConfiguration().isTimeBased()) {
-					janitorTime = new java.util.Date(view.getConfiguration().getTime().getLongValue());
+					janitorTime = new java.util.Date(view.getConfiguration().getTime().toJavaMsec());
 				} else if (view.getConfiguration().isLabelBased()) {
 					long labelTime = Long.MIN_VALUE;
 					for(Label l : view.fetchAllLabels()) {
-						if(l.getID() == view.getConfiguration().getLabelID()) {
-							labelTime = l.getRevisionTime().getLongValue();
+						if(l.getID() == view.getConfiguration().getLabel().getID()) {
+							labelTime = l.getRevisionTime().toJavaMsec();
 							break;
 						}
 					}
 					if(labelTime != Long.MIN_VALUE) {
 						janitorTime = new java.util.Date(labelTime);
 					} else {
-						System.err.println("Could not figure out what is the time of the label id " + view.getConfiguration().getLabelID());
+						System.err.println("Could not figure out what is the time of the label id " + view.getConfiguration().getLabel());
 						janitorTime = new java.util.Date();
 					}
 				} else {
@@ -354,7 +357,7 @@ public class GitImporter {
 
 		AddedSortedFileList.clear();
 		cm = null;
-		folder.discardItems(server.getTypeNames().FILE, -1);
+		folder.discardItems(server.getTypes().FILE, -1);
 	}
 	
 	@Override
@@ -373,7 +376,7 @@ public class GitImporter {
 	private void recoverDeleteInformation(Set<String> listOfFiles, String head, View view) {
 		RecycleBin recycleBin = view.getRecycleBin();
 		recycleBin.setIncludeDeletedItems(true);
-		Type fileType = server.typeForName(recycleBin.getTypeNames().FILE);
+		Item.Type fileType = view.getServer().getTypes().FILE;
 		RenameFinder renameFinder = new RenameFinder();
 
 		// Populate all the deleted file properties together for performance reasons.
@@ -405,8 +408,8 @@ public class GitImporter {
 												  path, pathname(item),
 												  renameEventItem.getModifiedTime());
 							}
-							deleteInfo = new CommitInformation(renameEventItem.getModifiedTime().getLongValue(),
-															   renameEventItem.getModifiedBy(),
+							deleteInfo = new CommitInformation(renameEventItem.getModifiedTime().toJavaMsec(),
+															   renameEventItem.getModifiedBy().getID(),
 															   "",
 															   path);
 						} else {
@@ -417,7 +420,7 @@ public class GitImporter {
 							// only information we have: the last view time
 							// and the last person to modify the item.
 							deleteInfo = new CommitInformation(lastViewTime,
-															   item.getModifiedBy(),
+															   item.getModifiedBy().getID(),
 															   "",
 															   path);
 						}
@@ -441,22 +444,22 @@ public class GitImporter {
 		}
 
 		if (nDeleted > 0) {
-			ItemList items = new ItemList();
+			ViewMemberCollection items = new ViewMemberCollection();
 			for (int i = 0; i < nDeleted; i++) {
-				items.addItem(deletedFiles[i]);
+				items.add(deletedFiles[i]);
 			}
-			PropertyNames propNames = view.getPropertyNames();
-			String[] populateProps = new String[] {
-				propNames.FILE_NAME,
-				propNames.ITEM_DELETED_TIME,
-				propNames.ITEM_DELETED_USER_ID,
-			};
-			items.populateNow(populateProps);
+			File.Type.PropertyCollection fileProps = (com.starteam.File.Type.PropertyCollection) server.getTypes().FILE.getProperties();
+			PropertyCollection populateProps = Property.resolveAllDependencies(new PropertyCollection(new Property[] {
+					fileProps.NAME,
+					fileProps.DELETED_BY,
+					fileProps.DELETED_TIME,
+				}));
+			items.getCache().populate(populateProps);
 
 			for (int i = 0; i < nDeleted; i++) {
 				File item = deletedFiles[i];
-				CommitInformation info = new CommitInformation(item.getDeletedTime().getLongValue(),
-															   item.getDeletedUserID(),
+				CommitInformation info = new CommitInformation(item.getDeletedTime().toJavaMsec(),
+															   item.getDeletedBy().getID(),
 															   "",
 															   deletedPaths[i]);
 				info.setFileDelete(true);
@@ -523,7 +526,7 @@ public class GitImporter {
 	}
 
 	private void recursiveFilePopulation(String head, Folder f) {
-		for(Item i : f.getItems(f.getTypeNames().FILE)) {
+		for(Object i : f.getItems(f.getView().getServer().getTypes().FILE)) {
 			if(i instanceof File) {
 				File historyFile = (File) i;
 				String path = pathname(historyFile);
@@ -545,7 +548,7 @@ public class GitImporter {
 				//if(verbose) {
 				//	System.err.println("Added file " + path);
 				//}
-				String comment = i.getComment();
+				String comment = historyFile.getComment();
 				if(0 == comment.length()) {
 					if(1 == historyFile.getContentVersion())
 						comment = historyFile.getDescription();
@@ -554,7 +557,7 @@ public class GitImporter {
 				} else if(comment.matches("Merge from .*?, Revision .*")) {
 					comment = "Merge from unknown branch";
 				}
-				CommitInformation info = new CommitInformation(i.getModifiedTime().getLongValue(), i.getModifiedBy(), comment, path);
+				CommitInformation info = new CommitInformation(historyFile.getModifiedTime().toJavaMsec(), historyFile.getModifiedBy().getID(), comment, path);
 
 				//TODO: find a proper solution to file update.
 				if(! lastSortedFileList.containsKey(info)) {
@@ -595,7 +598,7 @@ public class GitImporter {
 				lastCommit = date;
 			}
 			for(int i=0; i < viewLabels.length; ++i) {
-				if(viewLabels[i].getRevisionTime().getLongValue() > lastCommit.getTime()) {
+				if(viewLabels[i].getRevisionTime().toJavaMsec() > lastCommit.getTime()) {
 					System.err.println("Importing from label <" + viewLabels[i].getName() + ">");
 					fromLabel = i;
 					break;
@@ -609,8 +612,8 @@ public class GitImporter {
 		setFolder(view, baseFolder);
 		for(int i=fromLabel; i<viewLabels.length; ++i) {
 			if(viewLabels[i].isViewLabel()) {
-				View vc = new View(view, ViewConfiguration.createFromLabel(viewLabels[i].getID()));
-				long viewTime = viewLabels[i].getRevisionTime().getLongValue();
+				View vc = new View(view, ViewConfiguration.createFrom(viewLabels[i]));
+				long viewTime = viewLabels[i].getRevisionTime().toJavaMsec();
 				if(i == fromLabel && isResume) {
 					setLastFilesLastSortedFileList(vc, head, baseFolder);
 				}
@@ -680,8 +683,8 @@ public class GitImporter {
 				return;
 			}
 		}
-		if(firstTime < view.getCreatedTime().getLongValue()) {
-			firstTime = view.getCreatedTime().getLongValue();
+		if(firstTime < view.getCreatedTime().toJavaMsec()) {
+			firstTime = view.getCreatedTime().toJavaMsec();
 		}
 		System.err.println("View Created Time: " + new java.util.Date(firstTime));
 		if (null == date){
@@ -689,9 +692,8 @@ public class GitImporter {
 				// -R is for branch view
 				// 2000 mSec here is to avoid side effect in StarTeam View Configuration
 				viewTime = firstTime + 2000;
-				vc = new View(view, ViewConfiguration.createFromTime(new OLEDate(viewTime)));
+				vc = new View(view, ViewConfiguration.createFrom(new DateTime(viewTime)));
 				setLastFilesLastSortedFileList(vc, head, baseFolder);
-				vc.discard();
 			} 
 			Calendar time = Calendar.getInstance();
 			time.setTimeInMillis(firstTime);
@@ -704,12 +706,12 @@ public class GitImporter {
 		
 		// get the most recent commit 
 		setFolder(view, baseFolder);
-		getFolder().populateNow(server.getTypeNames().FILE, null, -1);
+		getFolder().populate(server.getTypes().FILE, null, -1);
 		recursiveLastModifiedTime(getFolder());
 		long lastTime = getLastModifiedTime();
 		// in case View life less than 24 hours
-		if(firstTime > lastTime && lastTime - view.getCreatedTime().getLongValue() < 24*hour) {
-			firstTime = view.getCreatedTime().getLongValue();
+		if(firstTime > lastTime && lastTime - view.getCreatedTime().toJavaMsec() < 24*hour) {
+			firstTime = view.getCreatedTime().toJavaMsec();
 		}
 
 		System.err.println("Commit from " + new java.util.Date(firstTime) + " to " + new java.util.Date(lastTime));
@@ -719,7 +721,7 @@ public class GitImporter {
 			if(lastTime - timeIncrement.getTimeInMillis() <= day) {
 				vc = view;
 			} else {
-				vc = new View(view, ViewConfiguration.createFromTime(new OLEDate(timeIncrement.getTimeInMillis())));
+				vc = new View(view, ViewConfiguration.createFrom(new DateTime(timeIncrement.getTimeInMillis())));
 				viewTime = timeIncrement.getTimeInMillis();
 			}
 			System.err.println("View Configuration Time: " + timeIncrement.getTime());
@@ -735,4 +737,5 @@ public class GitImporter {
 	public void dispose() {
 		helper.dispose();
 	}
+
 }

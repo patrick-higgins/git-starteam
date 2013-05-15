@@ -18,17 +18,17 @@ package org.sync.util;
 
 import java.util.Comparator;
 
-import com.starbase.starteam.Label;
+import com.starteam.Label;
 
 public class LabelDateComparator implements Comparator<Label> {
 
 	@Override
 	public int compare(Label arg0, Label arg1) {
-		if(arg0.getRevisionTime().getLongValue() > arg1.getRevisionTime().getLongValue())
+		if(arg0.getRevisionTime().toJavaMsec() > arg1.getRevisionTime().toJavaMsec())
 		{
 			return 1;
 		}
-		else if(arg0.getRevisionTime().getLongValue() < arg1.getRevisionTime().getLongValue())
+		else if(arg0.getRevisionTime().toJavaMsec() < arg1.getRevisionTime().toJavaMsec())
 		{
 			return -1;
 		}

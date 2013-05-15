@@ -5,7 +5,7 @@
   <target name="init">
     <property name="jargs.jar" value="jargs.jar"/>
     <property name="junit.jar" value="junit.jar"/>
-    <property name="starteam.jar" value="starteam110.jar"/>
+    <property name="starteam.jar" value="starteam130.jar"/>
   </target>
 
   <target name="clean">

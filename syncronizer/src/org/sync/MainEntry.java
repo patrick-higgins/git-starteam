@@ -21,10 +21,11 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-import com.starbase.starteam.Project;
-import com.starbase.starteam.Server;
-import com.starbase.starteam.View;
-import com.starbase.starteam.vts.comm.NetMonitor;
+import com.starteam.Project;
+import com.starteam.Server;
+import com.starteam.User;
+import com.starteam.View;
+import com.starteam.NetMonitor;
 import jargs.gnu.CmdLineParser;
 import jargs.gnu.CmdLineParser.IllegalOptionValueException;
 import jargs.gnu.CmdLineParser.UnknownOptionException;
@@ -142,8 +143,8 @@ public class MainEntry {
 		if(null == password) {
 			password = new String(con.readPassword("Password:"));
 		}
-		int userid = starteam.logOn(user, password);
-		if(userid > 0) {
+		User userid = starteam.logOn(user, password);
+		if(null != userid) {
 			boolean projectFound = false;
 			for(Project p : starteam.getProjects()) {
 				if(p.getName().equalsIgnoreCase(project)) {

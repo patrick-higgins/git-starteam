@@ -58,7 +58,7 @@ import org.sync.util.SmallRef;
 import org.sync.util.StarteamFileInfo;
 import org.sync.util.enumeration.FileStatusStyle;
 
-import com.starbase.util.MD5;
+import com.starteam.util.MD5;
 
 public class GitHelper extends RepositoryHelper {
 	

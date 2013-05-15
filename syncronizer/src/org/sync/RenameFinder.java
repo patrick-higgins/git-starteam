@@ -19,11 +19,12 @@ package org.sync;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.starbase.starteam.File;
-import com.starbase.starteam.Folder;
-import com.starbase.starteam.Item;
-import com.starbase.starteam.View;
-import com.starbase.util.FileUtils;
+import com.starteam.File;
+import com.starteam.Folder;
+import com.starteam.Item;
+import com.starteam.View;
+import com.starteam.ViewMemberCollection;
+import com.starteam.util.FileUtils;
 
 /**
  * RenameFinder searches for rename events and caches results.
@@ -52,16 +53,16 @@ public class RenameFinder {
 
 		// file was probably renamed during the time period
 		if (!oldFileName.equals(file.getName())) {
-			Item[] hist = file.getHistory();
-			for (int i = 0; i < hist.length; i++) {
-				File item = (File) hist[i];
-				long time = item.getModifiedTime().getLongValue();
+			ViewMemberCollection hist = file.getHistory();
+			for (int i = 0; i < hist.size(); i++) {
+				File item = (File) hist.getAt(i);
+				long time = item.getModifiedTime().toJavaMsec();
 				if (time < startTime) {
 					break;
 				}
-				if (i+1 < hist.length &&
+				if (i+1 < hist.size() &&
 					item.getName().equals(file.getName()) &&
-					((File)hist[i+1]).getName().equals(oldFileName)) {
+					((File)hist.getAt(i+1)).getName().equals(oldFileName)) {
 					return item;
 				}
 			}
@@ -74,15 +75,15 @@ public class RenameFinder {
 				if (item != null) {
 					return item;
 				}
-				Item[] hist = folder.getHistory();
-				for (int i = 0; i < hist.length; i++) {
-					item = (Folder) hist[i];
-					long time = item.getModifiedTime().getLongValue();
+				ViewMemberCollection hist = folder.getHistory();
+				for (int i = 0; i < hist.size(); i++) {
+					item = (Folder) hist.getAt(i);
+					long time = item.getModifiedTime().toJavaMsec();
 					if (time < startTime) {
 						break;
 					}
-					if (i+1 < hist.length &&
-						!item.getName().equals(((Folder)hist[i+1]).getName())) {
+					if (i+1 < hist.size() &&
+						!item.getName().equals(((Folder)hist.getAt(i+1)).getName())) {
 						cacheFolders(file.getParentFolder(), folder, item);
 						return item;
 					}
