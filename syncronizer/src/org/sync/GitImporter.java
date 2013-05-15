@@ -380,23 +380,28 @@ public class GitImporter {
 		RenameFinder renameFinder = new RenameFinder();
 
 		// Populate all the deleted file properties together for performance reasons.
-		String[] deletedPaths = new String[listOfFiles.size()];
-		File[] deletedFiles = new File[listOfFiles.size()];
-		int nDeleted = 0;
-
-		// No need to call populateNow on recycleBin.getRootFolder(), as that
-		// is done by recycleBin.findItem(). If we called it now, we would
-		// incur a long wait which we may not need.
+		File.Type.PropertyCollection fileProps = (com.starteam.File.Type.PropertyCollection) fileType.getProperties();
+		PropertyCollection populateProps = Property.resolveAllDependencies(new PropertyCollection(new Property[] {
+					fileProps.NAME,
+					fileProps.ITEM_DELETED_BY,
+					fileProps.ITEM_DELETED_TIME,
+				}));
+		recycleBin.getRootFolder().populate(fileType, populateProps, -1);
 		for(Iterator<String> ith = listOfFiles.iterator(); ith.hasNext(); ) {
 			String path = ith.next();
 			Integer fileID = helper.getRegisteredFileId(head, path);
 			if(null != fileID) {
 				File item = (File) recycleBin.findItem(fileType, fileID);
 				if(null != item && item.isDeleted()) {
-					deletedPaths[nDeleted] = path;
-					deletedFiles[nDeleted] = item;
-					nDeleted++;
+					CommitInformation info = new CommitInformation(item.getDeletedTime().toJavaMsec(),
+																   item.getDeletedBy().getID(),
+																   "",
+																   path);
+					info.setFileDelete(true);
 					ith.remove();
+					// Deleted files won't have entries, so add one here to make the delete end up in a commit.
+					sortedFileList.put(info, item);
+					AddedSortedFileList.put(info, item);
 				} else {
 					item = (File) view.findItem(fileType, fileID);
 					if(null != item) {
@@ -442,33 +447,6 @@ public class GitImporter {
 				System.err.println("Never seen the file " + path + " in " + head);
 			}
 		}
-
-		if (nDeleted > 0) {
-			ViewMemberCollection items = new ViewMemberCollection();
-			for (int i = 0; i < nDeleted; i++) {
-				items.add(deletedFiles[i]);
-			}
-			File.Type.PropertyCollection fileProps = (com.starteam.File.Type.PropertyCollection) server.getTypes().FILE.getProperties();
-			PropertyCollection populateProps = Property.resolveAllDependencies(new PropertyCollection(new Property[] {
-					fileProps.NAME,
-					fileProps.DELETED_BY,
-					fileProps.DELETED_TIME,
-				}));
-			items.getCache().populate(populateProps);
-
-			for (int i = 0; i < nDeleted; i++) {
-				File item = deletedFiles[i];
-				CommitInformation info = new CommitInformation(item.getDeletedTime().toJavaMsec(),
-															   item.getDeletedBy().getID(),
-															   "",
-															   deletedPaths[i]);
-				info.setFileDelete(true);
-				// Deleted files won't have entries, so add one here to make the delete end up in a commit.
-				sortedFileList.put(info, item);
-				AddedSortedFileList.put(info, item);
-			}
-		}
-
 	}
 
 	private void replaceEarlierCommitInfo(Map<CommitInformation, File> fileList, CommitInformation info, File file) {
